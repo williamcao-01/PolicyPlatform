@@ -1,0 +1,26 @@
+{
+  "id": "skill_no_policy_basis",
+  "name": "无制度依据识别",
+  "description": "识别审批流中疑似找不到制度依据的节点。",
+  "required_inputs": [
+    {
+      "name": "process_ids",
+      "label": "BPMN 流程",
+      "type": "process[]",
+      "min": 1,
+      "max": 1
+    },
+    {
+      "name": "policy_ids",
+      "label": "制度范围",
+      "type": "policy[]",
+      "min": 0
+    }
+  ],
+  "output_types": ["finding", "evidence", "suggestion", "professional_reference", "question"],
+  "allowed_finding_types": ["no_policy_basis", "extra_process_node", "missing_process_node"],
+  "evidence_policy": {
+    "min_evidence": 1,
+    "allowed_source_types": ["policy_clause", "bpmn_node"]
+  }
+}

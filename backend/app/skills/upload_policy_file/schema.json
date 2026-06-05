@@ -1,0 +1,26 @@
+{
+  "id": "skill_upload_policy_file",
+  "name": "上传制度文件",
+  "description": "上传制度文件，审查合理性，解析条款，选择制度树结构项后保存入库，并为角色清单提供候选角色。",
+  "required_inputs": [
+    {
+      "name": "file",
+      "label": "制度文件",
+      "type": "file",
+      "min": 1,
+      "accept": [".pdf", ".txt", ".md"]
+    },
+    {
+      "name": "category",
+      "label": "制度管理结构项",
+      "type": "string",
+      "min": 1
+    }
+  ],
+  "output_types": ["policy_document", "policy_clause", "role_candidate", "question", "suggestion", "professional_reference"],
+  "can_update_assets": true,
+  "evidence_policy": {
+    "min_evidence": 0,
+    "allowed_source_types": []
+  }
+}

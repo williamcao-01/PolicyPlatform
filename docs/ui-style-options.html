@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 制度治理工作台 - 视觉方案选择</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #eef2f6;
+        color: #182230;
+        font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      }
+
+      .page {
+        min-height: 100vh;
+        padding: 28px;
+      }
+
+      .title {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: end;
+        margin-bottom: 20px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 26px;
+        letter-spacing: 0;
+      }
+
+      .hint {
+        margin: 8px 0 0;
+        color: #667085;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .option {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--shell);
+        box-shadow: 0 18px 50px rgb(16 24 40 / 10%);
+      }
+
+      .option-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--line);
+        background: var(--head);
+      }
+
+      .option-name {
+        display: grid;
+        gap: 4px;
+      }
+
+      .option-name strong {
+        font-size: 18px;
+      }
+
+      .option-name span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .pill {
+        padding: 5px 9px;
+        border-radius: 999px;
+        background: var(--pill);
+        color: var(--pillText);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .mock {
+        display: grid;
+        grid-template-columns: 150px 1fr 140px;
+        gap: 10px;
+        min-height: 330px;
+        padding: 14px;
+      }
+
+      .left,
+      .center,
+      .right,
+      .metric,
+      .card,
+      .bubble,
+      .composer {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+
+      .left,
+      .right,
+      .center {
+        min-width: 0;
+      }
+
+      .left {
+        display: grid;
+        gap: 8px;
+        padding: 8px;
+      }
+
+      .section {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-height: 0;
+        overflow: hidden;
+        border: 1px solid var(--softLine);
+        border-radius: 7px;
+        background: var(--section);
+      }
+
+      .section-title {
+        display: flex;
+        justify-content: space-between;
+        padding: 7px 8px;
+        border-bottom: 1px solid var(--softLine);
+        color: var(--strong);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .rows {
+        display: grid;
+        align-content: start;
+        gap: 5px;
+        padding: 7px;
+      }
+
+      .row {
+        height: 18px;
+        border-radius: 5px;
+        background: var(--row);
+      }
+
+      .row.short {
+        width: 72%;
+      }
+
+      .center {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 10px;
+        padding: 10px;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+      }
+
+      .metric {
+        padding: 8px;
+      }
+
+      .metric span {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 5px;
+        color: var(--strong);
+        font-size: 20px;
+      }
+
+      .chat {
+        display: grid;
+        align-content: end;
+        gap: 8px;
+        min-height: 0;
+      }
+
+      .bubble {
+        padding: 9px 10px;
+        color: var(--text);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .bubble.result {
+        border-color: var(--accent);
+        background: var(--result);
+      }
+
+      .composer {
+        display: grid;
+        grid-template-columns: 1fr 62px;
+        gap: 8px;
+        padding: 8px;
+      }
+
+      .input {
+        height: 28px;
+        border-radius: 6px;
+        background: var(--input);
+      }
+
+      .send {
+        border-radius: 6px;
+        background: var(--button);
+      }
+
+      .right {
+        display: grid;
+        align-content: start;
+        gap: 8px;
+        padding: 8px;
+      }
+
+      .card {
+        display: grid;
+        gap: 8px;
+        padding: 9px;
+      }
+
+      .card-title {
+        color: var(--strong);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+
+      .tag {
+        padding: 3px 6px;
+        border-radius: 5px;
+        background: var(--tag);
+        color: var(--tagText);
+        font-size: 10px;
+      }
+
+      .apply {
+        height: 26px;
+        border-radius: 6px;
+        background: var(--button);
+      }
+
+      .notes {
+        display: grid;
+        gap: 6px;
+        padding: 0 18px 18px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .scheme-a {
+        --shell: #f6f8fb;
+        --head: #ffffff;
+        --panel: #ffffff;
+        --section: #fbfcfe;
+        --line: #d7dee8;
+        --softLine: #e6ebf2;
+        --row: #e9eef6;
+        --text: #243043;
+        --strong: #101828;
+        --muted: #667085;
+        --accent: #2f6fed;
+        --result: #eef4ff;
+        --input: #f3f6fb;
+        --button: #2f6fed;
+        --tag: #e7f0ff;
+        --tagText: #2359b8;
+        --pill: #e7f0ff;
+        --pillText: #2359b8;
+      }
+
+      .scheme-b {
+        --shell: #f7f4ee;
+        --head: #fffdf8;
+        --panel: #fffdf8;
+        --section: #fbf8f1;
+        --line: #ded5c5;
+        --softLine: #ebe3d4;
+        --row: #ece4d7;
+        --text: #2d2a24;
+        --strong: #181510;
+        --muted: #766b5b;
+        --accent: #b7791f;
+        --result: #fff7df;
+        --input: #f3ede2;
+        --button: #146c63;
+        --tag: #e4f3ef;
+        --tagText: #0f5d55;
+        --pill: #fff1cc;
+        --pillText: #8a520d;
+      }
+
+      .scheme-c {
+        --shell: #f2f7f6;
+        --head: #ffffff;
+        --panel: #ffffff;
+        --section: #f7fbfa;
+        --line: #cbdedb;
+        --softLine: #dcebe8;
+        --row: #e1efec;
+        --text: #243632;
+        --strong: #0d2b25;
+        --muted: #60746f;
+        --accent: #12856f;
+        --result: #e8f7f2;
+        --input: #eef6f4;
+        --button: #12856f;
+        --tag: #e2f3ee;
+        --tagText: #0b6857;
+        --pill: #e6f6f1;
+        --pillText: #0b6857;
+      }
+
+      .scheme-d {
+        --shell: #272b30;
+        --head: #30353b;
+        --panel: #333941;
+        --section: #2e343b;
+        --line: #48515c;
+        --softLine: #414954;
+        --row: #454e58;
+        --text: #e9edf2;
+        --strong: #ffffff;
+        --muted: #b7c0ca;
+        --accent: #89b4fa;
+        --result: #25364d;
+        --input: #262b31;
+        --button: #89b4fa;
+        --tag: #3d4d67;
+        --tagText: #d8e5ff;
+        --pill: #3d4d67;
+        --pillText: #d8e5ff;
+      }
+
+      @media (max-width: 1100px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="title">
+        <div>
+          <h1>AI 制度治理工作台 - 4 套视觉方案</h1>
+          <p class="hint">用于选择整体前端风格与配色。确认后再进入主应用实现。</p>
+        </div>
+      </div>
+
+      <section class="grid">
+        <article class="option scheme-a">
+          <div class="option-head">
+            <div class="option-name">
+              <strong>A. 冷静蓝白 / 当前升级版</strong>
+              <span>稳妥、清晰、低学习成本，适合第一版正式 Demo。</span>
+            </div>
+            <span class="pill">推荐稳态</span>
+          </div>
+          <div class="mock">
+            <div class="left">
+              <div class="section"><div class="section-title">制度管理 <span>12</span></div><div class="rows"><div class="row"></div><div class="row short"></div><div class="row"></div></div></div>
+              <div class="section"><div class="section-title">审批流管理 <span>8</span></div><div class="rows"><div class="row"></div><div class="row short"></div></div></div>
+              <div class="section"><div class="section-title">角色管理 <span>⚙</span></div><div class="rows"><div class="row"></div><div class="row"></div><div class="row short"></div></div></div>
+            </div>
+            <div class="center">
+              <div class="metrics"><div class="metric"><span>收录制度</span><strong>5</strong></div><div class="metric"><span>BPMN</span><strong>3</strong></div><div class="metric"><span>风险</span><strong>3</strong></div><div class="metric"><span>关闭</span><strong>0</strong></div></div>
+              <div class="chat"><div class="bubble">请检查制度与审批流是否一致。</div><div class="bubble result">已完成校验：发现 3 个待解决风险，证据已整理。</div></div>
+              <div class="composer"><div class="input"></div><div class="send"></div></div>
+            </div>
+            <div class="right"><div class="card"><div class="card-title">制度与流程校验</div><div class="tags"><span class="tag">制度文件</span><span class="tag">BPMN 流程</span></div><div class="apply"></div></div><div class="card"><div class="card-title">多制度冲突检查</div><div class="tags"><span class="tag">制度文件</span></div><div class="apply"></div></div></div>
+          </div>
+          <div class="notes">特点：延续企业软件常见蓝白体系，风险最低。改进重点是留白、边框层级、信息密度和按钮视觉。</div>
+        </article>
+
+        <article class="option scheme-b">
+          <div class="option-head">
+            <div class="option-name">
+              <strong>B. 档案纸本 / 制度文档感</strong>
+              <span>更像制度档案室和审查台，适合强调文件权威性。</span>
+            </div>
+            <span class="pill">文档治理</span>
+          </div>
+          <div class="mock">
+            <div class="left">
+              <div class="section"><div class="section-title">制度管理 <span>12</span></div><div class="rows"><div class="row"></div><div class="row short"></div><div class="row"></div></div></div>
+              <div class="section"><div class="section-title">审批流管理 <span>8</span></div><div class="rows"><div class="row"></div><div class="row short"></div></div></div>
+              <div class="section"><div class="section-title">角色管理 <span>⚙</span></div><div class="rows"><div class="row"></div><div class="row"></div><div class="row short"></div></div></div>
+            </div>
+            <div class="center">
+              <div class="metrics"><div class="metric"><span>收录制度</span><strong>5</strong></div><div class="metric"><span>BPMN</span><strong>3</strong></div><div class="metric"><span>风险</span><strong>3</strong></div><div class="metric"><span>关闭</span><strong>0</strong></div></div>
+              <div class="chat"><div class="bubble">导出以上待解决风险。</div><div class="bubble result">已生成 Excel，包含风险、证据、建议和引用。</div></div>
+              <div class="composer"><div class="input"></div><div class="send"></div></div>
+            </div>
+            <div class="right"><div class="card"><div class="card-title">上传制度文件</div><div class="tags"><span class="tag">制度文件</span></div><div class="apply"></div></div><div class="card"><div class="card-title">无制度依据识别</div><div class="tags"><span class="tag">BPMN 流程</span></div><div class="apply"></div></div></div>
+          </div>
+          <div class="notes">特点：暖白、纸张、墨绿行动色。比蓝白更有制度文档氛围，但整体会更“档案型”。</div>
+        </article>
+
+        <article class="option scheme-c">
+          <div class="option-head">
+            <div class="option-name">
+              <strong>C. 合规绿灰 / 风控控制台</strong>
+              <span>偏风险、合规、流程控制，适合长期工作台。</span>
+            </div>
+            <span class="pill">专业克制</span>
+          </div>
+          <div class="mock">
+            <div class="left">
+              <div class="section"><div class="section-title">制度管理 <span>12</span></div><div class="rows"><div class="row"></div><div class="row short"></div><div class="row"></div></div></div>
+              <div class="section"><div class="section-title">审批流管理 <span>8</span></div><div class="rows"><div class="row"></div><div class="row short"></div></div></div>
+              <div class="section"><div class="section-title">角色管理 <span>⚙</span></div><div class="rows"><div class="row"></div><div class="row"></div><div class="row short"></div></div></div>
+            </div>
+            <div class="center">
+              <div class="metrics"><div class="metric"><span>收录制度</span><strong>5</strong></div><div class="metric"><span>BPMN</span><strong>3</strong></div><div class="metric"><span>风险</span><strong>3</strong></div><div class="metric"><span>关闭</span><strong>0</strong></div></div>
+              <div class="chat"><div class="bubble">检查采购流程缺少制度依据的节点。</div><div class="bubble result">识别出 2 个节点需补充制度依据或复核适用范围。</div></div>
+              <div class="composer"><div class="input"></div><div class="send"></div></div>
+            </div>
+            <div class="right"><div class="card"><div class="card-title">无制度依据识别</div><div class="tags"><span class="tag">BPMN 流程</span></div><div class="apply"></div></div><div class="card"><div class="card-title">制度与流程校验</div><div class="tags"><span class="tag">制度文件</span><span class="tag">BPMN 流程</span></div><div class="apply"></div></div></div>
+          </div>
+          <div class="notes">特点：更像合规与风控产品，主色不刺眼，适合高频使用。风险是会显得更严肃。</div>
+        </article>
+
+        <article class="option scheme-d">
+          <div class="option-head">
+            <div class="option-name">
+              <strong>D. 深色指挥台 / AI 专家模式</strong>
+              <span>强科技感，适合演示大屏或高层展示，不建议日常默认。</span>
+            </div>
+            <span class="pill">演示冲击</span>
+          </div>
+          <div class="mock">
+            <div class="left">
+              <div class="section"><div class="section-title">制度管理 <span>12</span></div><div class="rows"><div class="row"></div><div class="row short"></div><div class="row"></div></div></div>
+              <div class="section"><div class="section-title">审批流管理 <span>8</span></div><div class="rows"><div class="row"></div><div class="row short"></div></div></div>
+              <div class="section"><div class="section-title">角色管理 <span>⚙</span></div><div class="rows"><div class="row"></div><div class="row"></div><div class="row short"></div></div></div>
+            </div>
+            <div class="center">
+              <div class="metrics"><div class="metric"><span>收录制度</span><strong>5</strong></div><div class="metric"><span>BPMN</span><strong>3</strong></div><div class="metric"><span>风险</span><strong>3</strong></div><div class="metric"><span>关闭</span><strong>0</strong></div></div>
+              <div class="chat"><div class="bubble">运行多制度冲突检查。</div><div class="bubble result">发现采购授权阈值冲突，建议进入复核。</div></div>
+              <div class="composer"><div class="input"></div><div class="send"></div></div>
+            </div>
+            <div class="right"><div class="card"><div class="card-title">多制度冲突检查</div><div class="tags"><span class="tag">制度文件</span></div><div class="apply"></div></div><div class="card"><div class="card-title">制度与流程校验</div><div class="tags"><span class="tag">制度文件</span><span class="tag">BPMN 流程</span></div><div class="apply"></div></div></div>
+          </div>
+          <div class="notes">特点：现场演示最有冲击力，信息块对比强。代价是长期阅读疲劳，制度正文和证据区需要额外打磨。</div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

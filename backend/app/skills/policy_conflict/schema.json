@@ -1,0 +1,19 @@
+{
+  "id": "skill_policy_conflict",
+  "name": "多制度冲突检查",
+  "description": "比对多份制度中同一事项的审批主体、动作、范围和阈值是否冲突。",
+  "required_inputs": [
+    {
+      "name": "policy_ids",
+      "label": "制度文件",
+      "type": "policy[]",
+      "min": 2
+    }
+  ],
+  "output_types": ["finding", "evidence", "suggestion", "professional_reference", "question"],
+  "allowed_finding_types": ["policy_conflict", "authority_mismatch"],
+  "evidence_policy": {
+    "min_evidence": 2,
+    "allowed_source_types": ["policy_clause"]
+  }
+}
