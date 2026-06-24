@@ -2,6 +2,7 @@ import os
 
 from app.models import SkillRunRequest
 from app.skill_runner import run_skill
+from app.services.system_settings import system_settings_service
 from app.store import store
 
 KB_UNAVAILABLE_Q = "专业知识库当前不可用。是否允许本次仅基于制度和流程证据先生成待复核结论？"
@@ -11,6 +12,7 @@ def setup_function() -> None:
     os.environ["KNOWLEDGE_API_URL"] = "http://127.0.0.1:9"
     os.environ["KNOWLEDGE_BASE_ENABLED"] = "true"
     os.environ["USE_REAL_LLM"] = "false"
+    system_settings_service.reset_from_environment()
     store.reset()
 
 

@@ -8,6 +8,7 @@ import httpx
 
 from app.hooks import hooks
 from app.models import ClarificationQuestion, ProfessionalReference
+from app.services.system_settings import system_settings_service
 
 
 @dataclass(frozen=True)
@@ -18,10 +19,11 @@ class KnowledgeBaseSettings:
 
 
 def load_knowledge_base_settings() -> KnowledgeBaseSettings:
+    runtime_config = system_settings_service.get().knowledge_base
     return KnowledgeBaseSettings(
-        api_url=os.getenv("KNOWLEDGE_API_URL", "http://127.0.0.1:8765"),
+        api_url=runtime_config.api_url,
         api_key=os.getenv("KNOWLEDGE_API_KEY", ""),
-        enabled=os.getenv("KNOWLEDGE_BASE_ENABLED", "true").lower() == "true",
+        enabled=runtime_config.enabled,
     )
 
 

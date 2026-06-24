@@ -1,6 +1,6 @@
-import { Alert, Spin } from 'antd';
+import { Alert, Avatar, Dropdown, Spin, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
-import { api } from './api';
+import { api, type AuthPrincipal, type AuthResponse } from './api';
 import { AssetSidebar } from './components/AssetSidebar';
 import { ChatWorkbench } from './components/ChatWorkbench';
 import { SkillPanel } from './components/SkillPanel';
@@ -8,10 +8,15 @@ import { TopMetrics } from './components/TopMetrics';
 import { AssetDetailDrawer } from './components/AssetDetailDrawer';
 import { FindingListDrawer } from './components/FindingListDrawer';
 import { PolicyUploadDrawer } from './components/PolicyUploadDrawer';
+import { AdminBackendModule } from './components/admin/AdminBackendModule';
+import { LoginPage, userCanOpenAdmin } from './components/LoginPage';
 import { useSkillRunner } from './hooks/useSkillRunner';
 import { useWorkbenchContext } from './hooks/useWorkbenchContext';
 import { validateSkillInput } from './skillValidation';
 import type { DashboardSummary, Finding, PolicyDocument, ProcessDefinition, RoleInventory, SkillDefinition, TreeItem } from './types';
+import { Settings, LogOut, UserRound } from 'lucide-react';
+
+const AUTH_STORAGE_KEY = 'policy_governance_auth';
 
 export default function App() {
   const [summary, setSummary] = useState<DashboardSummary>();
@@ -28,25 +33,52 @@ export default function App() {
   const [findingDrawerMode, setFindingDrawerMode] = useState<'pending' | 'closed'>('pending');
   const [findings, setFindings] = useState<Finding[]>([]);
   const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [auth, setAuth] = useState<AuthResponse | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [loginUsername, setLoginUsername] = useState('admin');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
   const { context, togglePolicy, toggleProcess, removePolicy, removeProcess } = useWorkbenchContext();
   const { runningSkillId, results, error, runSkill } = useSkillRunner();
   const assetLabelMap = useMemo(() => buildAssetLabelMap(policyTree, processTree), [policyTree, processTree]);
 
   useEffect(() => {
+    async function restoreAuth() {
+      const stored = readStoredAuth();
+      if (!stored?.access_token) {
+        setAuthChecked(true);
+        return;
+      }
+      try {
+        const user = await api.me(stored.access_token);
+        setAuth({ ...stored, user });
+      } catch {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      } finally {
+        setAuthChecked(true);
+      }
+    }
+    void restoreAuth();
+  }, []);
+
+  useEffect(() => {
+    if (!auth) return;
     async function load() {
       try {
-        const [nextSummary, nextPolicyTree, nextProcessTree, nextRoleInventory, nextSkills] = await Promise.all([
+        const [nextSummary, nextPolicyTree, nextProcessTree, nextSkills, nextFindings] = await Promise.all([
           api.summary(),
           api.policyTree(),
           api.processTree(),
-          api.roles(),
-          api.skills()
+          api.skills(),
+          api.findings()
         ]);
         setSummary(nextSummary);
         setPolicyTree(nextPolicyTree);
         setProcessTree(nextProcessTree);
-        setRoleInventory(nextRoleInventory);
         setSkills(nextSkills);
+        setFindings(nextFindings);
+        void loadRoleInventory();
       } catch (err) {
         const message = err instanceof Error ? err.message : '加载工作台数据失败';
         setLoadError(message);
@@ -55,7 +87,62 @@ export default function App() {
       }
     }
     void load();
-  }, []);
+  }, [auth]);
+
+  async function handleLogin() {
+    setLoginLoading(true);
+    setLoginError('');
+    try {
+      const next = await api.login(loginUsername);
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(next));
+      setAuth(next);
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : '登录失败');
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      if (auth?.access_token) await api.logout(auth.access_token);
+    } catch {
+      // Local demo logout should still clear the browser session.
+    }
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    setAuth(null);
+    setAdminOpen(false);
+    setLoading(true);
+    message.success('已登出');
+  }
+
+  if (!authChecked) {
+    return (
+      <div className="loading-screen">
+        <Spin size="large" />
+      </div>
+    );
+  }
+
+  if (!auth) {
+    return (
+      <LoginPage
+        username={loginUsername}
+        loading={loginLoading}
+        error={loginError}
+        onUsernameChange={setLoginUsername}
+        onLogin={handleLogin}
+      />
+    );
+  }
+
+  async function loadRoleInventory() {
+    try {
+      setRoleInventory(await api.roles());
+    } catch {
+      setRoleInventory(undefined);
+    }
+  }
 
   async function handleSkillRun(skillId: string, clarificationAnswers: Record<string, string> = {}) {
     if (skillId === 'skill_upload_policy_file') {
@@ -110,16 +197,15 @@ export default function App() {
   }
 
   async function refreshAssets() {
-    const [nextSummary, nextPolicyTree, nextProcessTree, nextRoleInventory] = await Promise.all([
+    const [nextSummary, nextPolicyTree, nextProcessTree] = await Promise.all([
       api.summary(),
       api.policyTree(),
-      api.processTree(),
-      api.roles()
+      api.processTree()
     ]);
     setSummary(nextSummary);
     setPolicyTree(nextPolicyTree);
     setProcessTree(nextProcessTree);
-    setRoleInventory(nextRoleInventory);
+    void loadRoleInventory();
   }
 
   async function handleDeletePolicy(policyId: string) {
@@ -152,13 +238,52 @@ export default function App() {
     );
   }
 
+  if (adminOpen) {
+    return (
+      <AdminBackendModule
+        findings={findings}
+        policyTree={policyTree}
+        processTree={processTree}
+        roleInventory={roleInventory}
+        skills={skills}
+        accessToken={auth.access_token}
+        currentUser={auth.user}
+        onBack={() => setAdminOpen(false)}
+      />
+    );
+  }
+
   return (
-    <div className="app-shell">
+    <div className="standalone-shell">
+      <div className="app-shell">
       <header className="app-header">
         <div>
           <h1>AI 制度治理工作台</h1>
         </div>
-        <TopMetrics summary={summary} onOpenFindings={openFindingDrawer} onOpenClosedFindings={openClosedFindingDrawer} />
+        <div className="header-metrics-wrap">
+          <TopMetrics summary={summary} onOpenFindings={openFindingDrawer} onOpenClosedFindings={openClosedFindingDrawer} />
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              items: [
+                ...(userCanOpenAdmin(auth.user) ? [{ key: 'admin', icon: <Settings size={15} />, label: '管理员后台' }] : []),
+                { key: 'logout', icon: <LogOut size={15} />, label: '登出' }
+              ],
+              onClick: ({ key }) => {
+                if (key === 'admin') {
+                  setAdminOpen(true);
+                  return;
+                }
+                void handleLogout();
+              }
+            }}
+          >
+            <button className="avatar-menu-button" type="button" aria-label="用户菜单">
+              <Avatar icon={<UserRound size={18} />} />
+              <span>{auth.user.display_name}</span>
+            </button>
+          </Dropdown>
+        </div>
       </header>
 
       <section className="workbench-grid">
@@ -212,8 +337,18 @@ export default function App() {
           await refreshAssets();
         }}
       />
+      </div>
     </div>
   );
+}
+
+function readStoredAuth(): AuthResponse | null {
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as AuthResponse) : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildAssetLabelMap(policyTree: TreeItem[], processTree: TreeItem[]) {

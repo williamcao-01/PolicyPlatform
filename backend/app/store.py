@@ -46,10 +46,10 @@ class DemoStore:
         return ProcessDefinition.model_validate(item) if item else None
 
     def delete_policy(self, policy_id: str) -> bool:
-        return db.delete_one("policies", policy_id)
+        return db.delete_policy(policy_id)
 
     def delete_process(self, process_id: str) -> bool:
-        return db.delete_one("processes", process_id)
+        return db.delete_process(process_id)
 
     def get_skill(self, skill_id: str):
         spec = get_skill_spec(skill_id)

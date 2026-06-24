@@ -1,7 +1,7 @@
 {
   "id": "skill_policy_process_check",
   "name": "制度与流程校验",
-  "description": "检查制度条款与 BPMN 审批流程节点是否一致。",
+  "description": "检查制度条款与 BPMN 审批流程节点是否一致，并识别流程节点缺少制度依据的问题。",
   "required_inputs": [
     {
       "name": "policy_ids",
@@ -19,7 +19,7 @@
   ],
   "output_types": ["finding", "bpmn_annotation", "evidence", "suggestion", "professional_reference", "question"],
   "can_update_assets": true,
-  "allowed_finding_types": ["missing_process_node", "extra_process_node", "authority_mismatch", "policy_conflict"],
+  "allowed_finding_types": ["missing_process_node", "extra_process_node", "authority_mismatch", "policy_conflict", "no_policy_basis"],
   "evidence_policy": {
     "min_evidence": 1,
     "allowed_source_types": ["policy_clause", "bpmn_node"]

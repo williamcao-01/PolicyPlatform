@@ -16,3 +16,5 @@ releases/
 *.db-shm
 *.db-wal
 backend/quality-eval-result.json
+backend/uploads/
+backend/backend/uploads/

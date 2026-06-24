@@ -47,5 +47,5 @@ def get_skill_spec(skill_id: str) -> SkillSpec | None:
 
 
 def list_skill_definitions() -> list[SkillDefinition]:
-    return [spec.definition for spec in load_skill_specs().values()]
-
+    hidden_skill_ids = {"skill_no_policy_basis"}
+    return [spec.definition for spec in load_skill_specs().values() if spec.definition.id not in hidden_skill_ids]

@@ -1,8 +1,10 @@
-import { Button, Descriptions, Drawer, List, Modal, Tabs, Tag } from 'antd';
-import { Trash2 } from 'lucide-react';
+import { Button, Descriptions, Drawer, List, Modal, Space, Tabs, Tag } from 'antd';
+import { Download, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import BpmnViewer from 'bpmn-js/lib/Viewer';
-import type { PolicyDocument, ProcessDefinition, RoleInventory } from '../types';
+import type { PolicyDocument, PolicyVersion, ProcessDefinition, ProcessVersion, RoleInventory } from '../types';
+import { api } from '../api';
 import { ClauseTree } from './ClauseTree';
 
 type Props = {
@@ -59,6 +61,8 @@ function BpmnCanvas({ xml }: { xml: string }) {
 
 export function AssetDetailDrawer({ policy, process, roleInventory, open, onClose, onDeletePolicy, onDeleteProcess }: Props) {
   const [deleting, setDeleting] = useState(false);
+  const [policyVersions, setPolicyVersions] = useState<PolicyVersion[]>([]);
+  const [processVersions, setProcessVersions] = useState<ProcessVersion[]>([]);
   const terms =
     roleInventory?.policy_roles
       .filter((role) => !policy || role.mentions.some((mention) => mention.asset_id === policy.id))
@@ -85,6 +89,26 @@ export function AssetDetailDrawer({ policy, process, roleInventory, open, onClos
     });
   }
 
+  useEffect(() => {
+    let active = true;
+    setPolicyVersions([]);
+    setProcessVersions([]);
+    if (!open) return;
+    if (policy) {
+      void api.policyVersions(policy.id).then((versions) => {
+        if (active) setPolicyVersions(versions);
+      });
+    }
+    if (process) {
+      void api.processVersions(process.id).then((versions) => {
+        if (active) setProcessVersions(versions);
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [open, policy?.id, process?.id]);
+
   return (
     <Drawer
       title={policy ? `${policy.name} 原文` : process ? `${process.asset.file_name} 流程文件` : '资产详情'}
@@ -106,11 +130,44 @@ export function AssetDetailDrawer({ policy, process, roleInventory, open, onClos
           <Descriptions size="small" column={2} bordered>
             <Descriptions.Item label="编号">{policy.code}</Descriptions.Item>
             <Descriptions.Item label="版本">{policy.version}</Descriptions.Item>
+            <Descriptions.Item label="版本数">{policy.version_count ?? 1}</Descriptions.Item>
             <Descriptions.Item label="类别">{policy.category}</Descriptions.Item>
             <Descriptions.Item label="适用范围">{policy.org_scope}</Descriptions.Item>
             <Descriptions.Item label="状态">{policy.status}</Descriptions.Item>
             <Descriptions.Item label="生效日期">{policy.effective_date}</Descriptions.Item>
+            <Descriptions.Item label="源文件">
+              {policy.source_file ? (
+                <Button
+                  icon={<Download size={14} />}
+                  size="small"
+                  type="link"
+                  onClick={() => void api.downloadPolicySource(policy.id, policy.source_file?.file_name || `${policy.name}.pdf`)}
+                >
+                  下载源文件
+                </Button>
+              ) : (
+                '未保留'
+              )}
+            </Descriptions.Item>
           </Descriptions>
+          <VersionList
+            title="版本管理"
+            versions={policyVersions}
+            renderSource={(version) =>
+              version.source_file ? (
+                <Button
+                  icon={<Download size={14} />}
+                  size="small"
+                  type="link"
+                  onClick={() => void api.downloadPolicyVersionSource(policy.id, version.id, version.source_file?.file_name || `${policy.name}-${version.version_no}.pdf`)}
+                >
+                  下载源文件
+                </Button>
+              ) : (
+                <span className="muted-text">未保留源文件</span>
+              )
+            }
+          />
           <div>
             <div className="detail-header">
               <span>结构化条款</span>
@@ -160,10 +217,72 @@ export function AssetDetailDrawer({ policy, process, roleInventory, open, onClos
               key: 'xml',
               label: '源文件 XML',
               children: <pre className="xml-fallback">{process.asset.bpmn_xml}</pre>
+            },
+            {
+              key: 'versions',
+              label: '版本管理',
+              children: (
+                <VersionList
+                  title="版本管理"
+                  versions={processVersions}
+                  renderSource={(version) => <span className="muted-text">{version.asset.file_name}</span>}
+                />
+              )
             }
           ]}
         />
       ) : null}
     </Drawer>
   );
+}
+
+function VersionList<T extends { id: string; version_no: string; status: string; effective_date: string; created_at: string; change_summary: string }>({
+  title,
+  versions,
+  renderSource
+}: {
+  title: string;
+  versions: T[];
+  renderSource: (version: T) => ReactNode;
+}) {
+  return (
+    <div className="version-section">
+      <div className="detail-header">
+        <span>{title}</span>
+        <span className="muted-text">共 {versions.length} 个版本</span>
+      </div>
+      <List
+        size="small"
+        dataSource={versions}
+        locale={{ emptyText: '暂无版本记录' }}
+        renderItem={(version) => (
+          <List.Item actions={[renderSource(version)]}>
+            <List.Item.Meta
+              title={
+                <Space>
+                  <span>{version.version_no}</span>
+                  <Tag color={version.status === 'current' ? 'green' : 'default'}>
+                    {version.status === 'current' ? '当前生效' : '历史版本'}
+                  </Tag>
+                </Space>
+              }
+              description={
+                <span className="muted-text">
+                  生效日期：{version.effective_date || '未识别'} · 保存时间：{formatDateTime(version.created_at)}
+                  {version.change_summary ? ` · ${version.change_summary}` : ''}
+                </span>
+              }
+            />
+          </List.Item>
+        )}
+      />
+    </div>
+  );
+}
+
+function formatDateTime(value: string) {
+  if (!value) return '未知';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', { hour12: false });
 }

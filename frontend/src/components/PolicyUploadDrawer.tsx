@@ -1,5 +1,5 @@
-import { Alert, Button, Checkbox, Descriptions, Drawer, Input, Progress, Select, Space, Tag, Upload } from 'antd';
-import { UploadCloud } from 'lucide-react';
+import { Alert, Button, Checkbox, Descriptions, Drawer, Input, Modal, Progress, Select, Space, Tag, Upload } from 'antd';
+import { Download, UploadCloud } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { api } from '../api';
 import type { PolicyDocument, PolicyUploadAnalysis, TreeItem } from '../types';
@@ -69,7 +69,7 @@ export function PolicyUploadDrawer({ open, policyTree, onClose, onSaved }: Props
     }
   }
 
-  async function save() {
+  async function doSave() {
     if (!analysis || !category) return;
     setLoading(true);
     setError(null);
@@ -85,6 +85,24 @@ export function PolicyUploadDrawer({ open, policyTree, onClose, onSaved }: Props
     } finally {
       setLoading(false);
     }
+  }
+
+  function save() {
+    if (!analysis || !category) return;
+    const match = analysis.version_match;
+    const versionText =
+      match?.decision === 'auto_version'
+        ? `系统已高置信度匹配到《${match.policy_name}》，保存后会作为该制度的新版本并默认生效。`
+        : match?.decision === 'needs_confirmation'
+          ? '你已在确认项中说明保存方式。若作为已有制度新版本保存，保存后会默认生效。'
+          : '保存后会作为当前制度管理中的生效版本。';
+    Modal.confirm({
+      title: '确认保存版本',
+      content: `${versionText}系统不会自动重跑既有风险，既有风险只会在查看时提示“该风险基于历史版本”。`,
+      okText: '确认保存',
+      cancelText: '取消',
+      onOk: doSave
+    });
   }
 
   return (
@@ -132,7 +150,34 @@ export function PolicyUploadDrawer({ open, policyTree, onClose, onSaved }: Props
               <Descriptions.Item label="生效日期">{analysis.metadata.effective_date || '待确认'}</Descriptions.Item>
               <Descriptions.Item label="建议分类">{analysis.metadata.category || '待确认'}</Descriptions.Item>
               <Descriptions.Item label="条款数">{analysis.clauses.length}</Descriptions.Item>
+              <Descriptions.Item label="源文件">
+                {analysis.source_file ? (
+                  <Button
+                    icon={<Download size={14} />}
+                    size="small"
+                    type="link"
+                    onClick={() => void api.downloadUploadSource(analysis.analysis_id, analysis.source_file?.file_name || analysis.file_name)}
+                  >
+                    下载源文件
+                  </Button>
+                ) : (
+                  '未保留'
+                )}
+              </Descriptions.Item>
             </Descriptions>
+
+            {analysis.version_match && analysis.version_match.decision !== 'new_policy' ? (
+              <Alert
+                type={analysis.version_match.decision === 'auto_version' ? 'success' : 'warning'}
+                showIcon
+                message={analysis.version_match.decision === 'auto_version' ? '将作为已有制度的新版本保存' : '疑似已有制度的新版本，需确认'}
+                description={
+                  analysis.version_match.decision === 'auto_version'
+                    ? `匹配制度：《${analysis.version_match.policy_name}》。判断依据：${analysis.version_match.reason}；置信度 ${Math.round(analysis.version_match.confidence * 100)}%。`
+                    : `疑似制度：《${analysis.version_match.policy_name}》。判断依据：${analysis.version_match.reason}；置信度 ${Math.round(analysis.version_match.confidence * 100)}%。`
+                }
+              />
+            ) : null}
 
             <div>
               <div className="field-label">保存到制度管理结构项</div>

@@ -195,6 +195,12 @@ def _normalize_role(name: str) -> str:
 
 def _auto_mappings_with_llm_fallback(policy_roles: list[RoleEntry], process_roles: list[RoleEntry]) -> list[RoleMapping]:
     settings = load_deepseek_settings()
+    if len(policy_roles) + len(process_roles) > 40:
+        return _deterministic_mappings(
+            policy_roles,
+            process_roles,
+            "角色数量较大，已先使用本地相似度规则生成首屏映射候选；可在设置中人工调整关键映射。",
+        )
     if settings.use_real_llm and settings.api_key and policy_roles and process_roles:
         try:
             return _llm_mappings(policy_roles, process_roles)

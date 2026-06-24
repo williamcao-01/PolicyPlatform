@@ -21,9 +21,17 @@ const skills: SkillDefinition[] = [
     can_update_assets: true
   },
   {
+    id: 'skill_upload_policy_file',
+    name: '上传制度文件',
+    description: '上传并解析制度。',
+    required_inputs: [{ label: '制度文件' }],
+    output_types: ['finding'],
+    can_update_assets: false
+  },
+  {
     id: 'skill_no_policy_basis',
     name: '无制度依据识别',
-    description: '识别无依据节点。',
+    description: '兼容旧任务，不应展示。',
     required_inputs: [{ label: 'BPMN 流程' }],
     output_types: ['finding'],
     can_update_assets: false
@@ -43,7 +51,8 @@ describe('SkillPanel', () => {
 
     expect(screen.getByText('多制度冲突检查')).toBeInTheDocument();
     expect(screen.getByText('制度与流程校验')).toBeInTheDocument();
-    expect(screen.getByText('无制度依据识别')).toBeInTheDocument();
+    expect(screen.getByText('上传制度文件')).toBeInTheDocument();
+    expect(screen.queryByText('无制度依据识别')).not.toBeInTheDocument();
     expect(screen.getAllByText('点选应用')).toHaveLength(3);
   });
 });

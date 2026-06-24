@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 Severity = Literal["low", "medium", "high", "critical"]
 FindingStatus = Literal["pending_review", "in_progress", "closed", "rejected"]
+VerificationStatus = Literal["verified", "uncertain"]
+VersionStatus = Literal["current", "historical"]
 
 
 class PolicyClause(BaseModel):
@@ -19,6 +21,13 @@ class PolicyClause(BaseModel):
     order_index: int
 
 
+class PolicySourceFile(BaseModel):
+    file_name: str
+    stored_name: str
+    content_type: str = "application/octet-stream"
+    size: int = 0
+
+
 class PolicyDocument(BaseModel):
     id: str
     name: str
@@ -29,6 +38,23 @@ class PolicyDocument(BaseModel):
     status: str
     effective_date: str
     clauses: list[PolicyClause] = Field(default_factory=list)
+    source_file: PolicySourceFile | None = None
+    current_version_id: str = ""
+    version_count: int = 1
+
+
+class PolicyVersion(BaseModel):
+    id: str
+    policy_id: str
+    version_no: str
+    effective_date: str
+    status: VersionStatus = "current"
+    created_at: str
+    created_by: str = "system"
+    change_summary: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    clauses: list[PolicyClause] = Field(default_factory=list)
+    source_file: PolicySourceFile | None = None
 
 
 class ProcessNode(BaseModel):
@@ -56,6 +82,22 @@ class ProcessDefinition(BaseModel):
     business_domain: str
     org_scope: str
     status: str
+    nodes: list[ProcessNode] = Field(default_factory=list)
+    asset: ProcessAsset
+    current_version_id: str = ""
+    version_count: int = 1
+
+
+class ProcessVersion(BaseModel):
+    id: str
+    process_id: str
+    version_no: str
+    effective_date: str
+    status: VersionStatus = "current"
+    created_at: str
+    created_by: str = "system"
+    change_summary: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
     nodes: list[ProcessNode] = Field(default_factory=list)
     asset: ProcessAsset
 
@@ -150,6 +192,11 @@ class Finding(BaseModel):
     assumption: str = ""
     suggestion: str
     professional_references: list[ProfessionalReference] = Field(default_factory=list)
+    verification_status: VerificationStatus = "verified"
+    verification_note: str = ""
+    policy_version_ids: list[str] = Field(default_factory=list)
+    process_version_ids: list[str] = Field(default_factory=list)
+    based_on_historical_version: bool = False
 
 
 class SkillDefinition(BaseModel):

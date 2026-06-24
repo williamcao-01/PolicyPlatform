@@ -10,18 +10,19 @@ type Props = {
 };
 
 function inputSummary(skill: SkillDefinition) {
-  if (skill.id === 'skill_no_policy_basis' || skill.id === 'skill_policy_process_check') return '流程图与多份制度文件';
+  if (skill.id === 'skill_policy_process_check') return '流程图与多份制度文件';
   if (skill.id === 'skill_policy_conflict') return '多份制度文件';
   if (skill.id === 'skill_upload_policy_file') return '1份制度文件';
   return skill.required_inputs.map((input) => String(input.label)).join(' + ');
 }
 
 export function SkillPanel({ skills, context, runningSkillId, onSkillRun }: Props) {
+  const visibleSkills = skills.filter((skill) => skill.id !== 'skill_no_policy_basis');
   return (
     <aside className="skill-panel">
       <div className="panel-title">快速任务</div>
       <Space direction="vertical" size={12} className="full-width">
-        {skills.map((skill) => (
+        {visibleSkills.map((skill) => (
           <Card size="small" key={skill.id} className="skill-card">
             <div className="skill-heading">
               <span>{skill.name}</span>
