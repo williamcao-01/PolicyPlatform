@@ -20,7 +20,7 @@ SCENARIOS = [
         process_ids=["process_purchase"],
     ),
     SkillRunRequest(
-        skill_id="skill_no_policy_basis",
+        skill_id="skill_policy_process_check",
         policy_ids=["policy_recruit", "policy_salary"],
         process_ids=["process_recruit"],
     ),
@@ -63,4 +63,3 @@ def run_quality_eval(output_path: str = "backend/quality-eval-result.json") -> d
 
 if __name__ == "__main__":
     print(json.dumps(run_quality_eval(), ensure_ascii=False, indent=2))
-

@@ -26,6 +26,7 @@ class HookRegistry:
             created_at=datetime.now(timezone.utc).isoformat(),
         )
         self.events.append(event)
+        _mirror_ai_audit_event(event)
         return event
 
     def clear(self) -> None:
@@ -34,3 +35,23 @@ class HookRegistry:
 
 hooks = HookRegistry()
 
+
+def _mirror_ai_audit_event(event: HookEvent) -> None:
+    if event.name not in {"after_llm_call", "skill_run_failed", "upload_analysis_fallback", "finding_verification_failed"}:
+        return
+    try:
+        from app.services.ai_governance import AICallLog, ai_governance_service
+    except Exception:
+        return
+    status = "succeeded" if event.name == "after_llm_call" else "failed"
+    ai_governance_service.record_call(
+        AICallLog(
+            id=f"ai_call_{event.id.removeprefix('hook_')}",
+            provider=str(event.payload.get("provider") or "deepseek" if event.payload.get("model") else "system"),
+            model=str(event.payload.get("model") or ""),
+            skill_id=str(event.payload.get("skill_id") or ""),
+            status=status,
+            error=str(event.payload.get("reason") or ""),
+            created_at=event.created_at,
+        )
+    )

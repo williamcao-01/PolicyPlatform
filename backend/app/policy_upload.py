@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import json
-import re
+import os
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
-
-from fastapi import UploadFile
-from pypdf import PdfReader
 
 from app import db
 from app.deepseek_client import DeepSeekClient, load_deepseek_settings
@@ -19,253 +16,23 @@ from app.knowledge_base import (
     professional_references_from_kb,
 )
 from app.models import PolicyClause, PolicyDocument
+from app.policy_upload_admission import normalize_upload_admission
+from app.policy_upload_parser import (
+    extract_policy_concepts,
+    extract_policy_metadata,
+    extract_upload_text,
+    extract_upload_text_from_bytes,
+    filter_policy_concepts,
+    safe_upload_id,
+    split_policy_clauses,
+)
 from app.skill_registry import get_skill_spec
-
-KG_TYPE_ALIASES = {
-    "Role": "人员角色",
-    "角色": "人员角色",
-    "人员角色": "人员角色",
-    "岗位": "人员角色",
-    "Position": "人员角色",
-    "Department": "部门组织",
-    "部门": "部门组织",
-    "组织": "部门组织",
-    "组织部门": "部门组织",
-    "部门组织": "部门组织",
-    "Organization": "部门组织",
-    "OrgUnit": "部门组织",
-    "BusinessRule": "业务规则",
-    "Rule": "业务规则",
-    "业务规则": "业务规则",
-    "规则": "业务规则",
-    "Condition": "业务规则",
-}
-
-
-def _safe_id(prefix: str, text: str | None = None) -> str:
-    suffix = re.sub(r"[^a-zA-Z0-9]+", "_", text or "")[:32].strip("_").lower()
-    random_part = uuid4().hex[:8]
-    return f"{prefix}_{suffix}_{random_part}" if suffix else f"{prefix}_{random_part}"
-
-
-async def extract_upload_text(file: UploadFile) -> str:
-    data = await file.read()
-    suffix = Path(file.filename or "").suffix.lower()
-    if suffix == ".pdf":
-        temp_path = Path("backend") / f"upload_{uuid4().hex}.pdf"
-        temp_path.write_bytes(data)
-        try:
-            reader = PdfReader(str(temp_path))
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
-        finally:
-            temp_path.unlink(missing_ok=True)
-    if suffix in {".txt", ".md"}:
-        return data.decode("utf-8", errors="ignore")
-    raise ValueError("当前仅支持 PDF、TXT、Markdown 文件。")
-
-
-def _split_clauses(text: str, policy_id: str) -> list[dict[str, Any]]:
-    lines = _policy_body_lines(text)
-    clauses: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    index_by_clause_no: dict[str, str] = {}
-    current_numeric_no = ""
-    pattern = re.compile(r"^(?P<num>\d+(?:\.\d+){0,5})(?:\s+|[、.．])(?P<title>.+)?$")
-    bullet_pattern = re.compile(r"^[（(](?P<num>\d+|[一二三四五六七八九十]+)[）)]\s*(?P<title>.+)$")
-
-    def append_current() -> None:
-        if current and current["content"].strip():
-            clauses.append(current)
-
-    def parent_for_clause(clause_no: str) -> str | None:
-        if "(" in clause_no:
-            return index_by_clause_no.get(current_numeric_no)
-        parts = clause_no.split(".")
-        if len(parts) <= 1:
-            return None
-        return index_by_clause_no.get(".".join(parts[:-1]))
-
-    def start_clause(clause_no: str, title: str, line: str) -> None:
-        nonlocal current, current_numeric_no
-        append_current()
-        if "(" not in clause_no:
-            current_numeric_no = clause_no
-        clause_id = f"clause_{policy_id}_{len(clauses) + 1}"
-        current = {
-            "id": clause_id,
-            "policy_id": policy_id,
-            "clause_no": clause_no,
-            "title": title[:80] or f"条款 {clause_no}",
-            "content": line,
-            "parent_id": parent_for_clause(clause_no),
-            "order_index": len(clauses) + 1,
-        }
-        index_by_clause_no[clause_no] = clause_id
-
-    for line in lines:
-        match = pattern.match(line)
-        if match:
-            clause_no = match.group("num")
-            title = (match.group("title") or "").strip()
-            start_clause(clause_no, title, line)
-            continue
-        bullet_match = bullet_pattern.match(line)
-        if bullet_match and current_numeric_no:
-            bullet_no = bullet_match.group("num")
-            clause_no = f"{current_numeric_no}({bullet_no})"
-            title = bullet_match.group("title").strip()
-            start_clause(clause_no, title, line)
-        elif current:
-            current["content"] = f"{current['content']}\n{line}"
-    if current:
-        clauses.append(current)
-    return clauses[:160]
-
-
-def _policy_body_lines(text: str) -> list[str]:
-    lines: list[str] = []
-    skip_patterns = [
-        re.compile(r"^文件名\s+"),
-        re.compile(r"^编号\s+.+页码\s+"),
-        re.compile(r"^编制\s+.+生效日期\s+.+页码\s+"),
-        re.compile(r"^第\s*\d+\s*页[，,]\s*共\s*\d+\s*页$"),
-    ]
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if any(pattern.search(line) for pattern in skip_patterns):
-            continue
-        lines.append(line)
-    return lines
-
-
-def _extract_metadata(text: str) -> dict[str, str]:
-    first_lines = "\n".join(text.splitlines()[:20])
-    name_match = re.search(r"(?:文件名\s*)?([^\n]{4,80}(?:制度|办法|细则|指引|规范))", first_lines)
-    code_match = re.search(r"(?:编号|制度编号)\s*([A-Z0-9.\-]+)", first_lines)
-    version_match = re.search(r"(?:版本|版号)\s*([A-Za-z0-9/.\-]+)", first_lines)
-    date_match = re.search(r"(?:生效日期|发布日期)\s*([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2})", first_lines)
-    module_match = re.search(r"(?:所属模块|模块|类别)\s*([^\s\n]+)", first_lines)
-    return {
-        "name": name_match.group(1).strip() if name_match else "未命名制度",
-        "code": code_match.group(1).strip() if code_match else "",
-        "version": version_match.group(1).strip() if version_match else "",
-        "effective_date": date_match.group(1).replace("/", "-") if date_match else "",
-        "category": module_match.group(1).strip() if module_match else "",
-        "org_scope": "待确认",
-    }
-
-
-def _extract_concepts(text: str) -> list[dict[str, str]]:
-    candidates = {
-        "人员角色": ["采购中心", "采购管理部门", "采购实施部门", "决策小组", "风控", "人力资源负责人", "分管领导", "平台公司业务分管领导", "部门负责人", "平台总经理", "子公司总经理"],
-        "部门组织": ["生产管理中心", "生产管理部", "饲料产品部", "饲料厂", "财务运营部", "数字化部", "下属企业"],
-    }
-    concepts = []
-    for node_type, terms in candidates.items():
-        for term in terms:
-            if term in text:
-                concepts.append({"node_type": node_type, "name": term})
-    for match in re.finditer(r"(?:金额|单笔金额|采购金额)?超过\s*\d+\s*万元[^。；\n]{0,40}(?:审批|复核|备案|决策)", text):
-        concepts.append({"node_type": "业务规则", "name": match.group(0).strip("，；。 ")})
-    for match in re.finditer(r"[^。；\n]{0,30}(?:需|应|必须|不得)[^。；\n]{0,50}(?:审批|复核|备案|决策|记录|归档)", text):
-        rule = match.group(0).strip("，；。 ")
-        if 6 <= len(rule) <= 80:
-            concepts.append({"node_type": "业务规则", "name": rule})
-    return _filter_concepts(concepts)
-
-
-def _filter_concepts(concepts: list[dict[str, Any]]) -> list[dict[str, str]]:
-    filtered: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for concept in concepts:
-        node_type = KG_TYPE_ALIASES.get(str(concept.get("node_type", "")).strip())
-        name = str(concept.get("name", "")).strip()
-        if not node_type or not name:
-            continue
-        if len(name) > 100:
-            continue
-        key = (node_type, name)
-        if key in seen:
-            continue
-        seen.add(key)
-        filtered.append({"node_type": node_type, "name": name})
-    return filtered
-
-
-def _policy_like_signals(text: str, metadata: dict[str, str], clauses: list[dict[str, Any]]) -> dict[str, bool]:
-    first_page = text[:3000]
-    policy_keywords = ["制度", "办法", "细则", "指引", "规范", "规程", "规定", "管理要求"]
-    governance_keywords = ["目的", "适用范围", "职责", "流程", "审批", "监督", "附则", "管理", "要求"]
-    return {
-        "has_enough_text": len(text.strip()) >= 120,
-        "has_policy_name": metadata.get("name") != "未命名制度" or any(keyword in first_page for keyword in policy_keywords),
-        "has_policy_keyword": any(keyword in first_page for keyword in policy_keywords),
-        "has_governance_content": sum(1 for keyword in governance_keywords if keyword in text) >= 2,
-        "has_clause_structure": len(clauses) >= 2,
-    }
-
-
-def _hard_rejection_reasons(text: str, metadata: dict[str, str], clauses: list[dict[str, Any]]) -> list[str]:
-    signals = _policy_like_signals(text, metadata, clauses)
-    reasons: list[str] = []
-    if not signals["has_enough_text"]:
-        reasons.append("文档文本过短，无法形成可解析的制度正文。")
-    if not signals["has_policy_name"] and not signals["has_policy_keyword"]:
-        reasons.append("未识别到制度、办法、细则、指引、规范等制度型文件特征。")
-    if not signals["has_clause_structure"] and not signals["has_governance_content"]:
-        reasons.append("未识别到章节条款结构或职责、流程、审批、管理要求等治理内容。")
-    return reasons
-
-
-def _normalize_admission(
-    analysis: dict[str, Any],
-    text: str,
-    metadata: dict[str, str],
-    clauses: list[dict[str, Any]],
-) -> dict[str, Any]:
-    hard_reasons = _hard_rejection_reasons(text, metadata, clauses)
-    original_suitable = bool(analysis.get("suitable"))
-    model_reasons = [str(reason).strip() for reason in analysis.get("reasons", []) if str(reason).strip()]
-    existing_questions = [str(question).strip() for question in analysis.get("questions", []) if str(question).strip()]
-    suggestions = [str(item).strip() for item in analysis.get("suggestions", []) if str(item).strip()]
-
-    if hard_reasons:
-        analysis["suitable"] = False
-        analysis["rejection_level"] = "hard"
-        analysis["can_force_upload"] = False
-        analysis["reasons"] = hard_reasons
-        analysis["questions"] = existing_questions
-        analysis["suggestions"] = suggestions + [issue for issue in model_reasons if issue not in suggestions]
-        return analysis
-
-    soft_issues = model_reasons if not original_suitable else []
-    analysis["suitable"] = True
-    analysis["rejection_level"] = "none"
-    analysis["can_force_upload"] = True
-    analysis["reasons"] = []
-    analysis["questions"] = _filter_upload_questions(existing_questions)
-    analysis["suggestions"] = suggestions + [issue for issue in soft_issues if issue not in suggestions]
-    return analysis
-
-
-def _filter_upload_questions(questions: list[str]) -> list[str]:
-    allowed_keywords = ["制度名称", "编号", "版本", "生效日期", "保存", "结构项", "分类", "同一主体", "同一角色", "同一组织", "引用文件", "入库范围"]
-    blocked_keywords = ["角色未定义", "术语未定义", "监督检查", "违规追责", "后续再补充完善", "不影响本次先入库"]
-    filtered: list[str] = []
-    for question in questions:
-        if any(keyword in question for keyword in blocked_keywords):
-            continue
-        if any(keyword in question for keyword in allowed_keywords):
-            filtered.append(question)
-    return filtered
 
 
 def _heuristic_analysis(text: str, file_name: str) -> dict[str, Any]:
-    metadata = _extract_metadata(text)
-    temp_policy_id = _safe_id("policy", metadata["name"])
-    clauses = _split_clauses(text, temp_policy_id)
+    metadata = extract_policy_metadata(text)
+    temp_policy_id = safe_upload_id("policy", metadata["name"])
+    clauses = split_policy_clauses(text, temp_policy_id)
     has_structure = len(clauses) >= 3
     has_policy_name = metadata["name"] != "未命名制度"
     has_scope_or_purpose = "目的" in text or "适用范围" in text
@@ -297,12 +64,12 @@ def _heuristic_analysis(text: str, file_name: str) -> dict[str, Any]:
         "questions": questions,
         "metadata": metadata,
         "clauses": clauses,
-        "concepts": _extract_concepts(text),
+        "concepts": extract_policy_concepts(text),
         "professional_references": [],
         "professional_questions": [],
         "text_preview": text[:1200],
     }
-    return _normalize_admission(analysis, text, metadata, clauses)
+    return normalize_upload_admission(analysis, text, metadata, clauses)
 
 
 def _llm_analysis(text: str, file_name: str) -> dict[str, Any]:
@@ -317,8 +84,42 @@ def _llm_analysis(text: str, file_name: str) -> dict[str, Any]:
         analysis["professional_references"] = professional_references
         analysis["professional_questions"] = professional_questions
         return analysis
-    system_prompt = (
-        f"{spec.prompt}\n\n"
+
+    hooks.emit("before_llm_call", {"skill_id": "skill_upload_policy_file", "model": load_deepseek_settings().model})
+    try:
+        result = DeepSeekClient().chat_json(_upload_system_prompt(spec.prompt), _upload_user_prompt(text, file_name, kb_data))
+        hooks.emit("after_llm_call", {"skill_id": "skill_upload_policy_file", "finding_count": 0})
+    except Exception as exc:
+        hooks.emit("upload_analysis_fallback", {"reason": str(exc)})
+        analysis = _heuristic_analysis(text, file_name)
+        analysis["professional_references"] = professional_references
+        analysis["professional_questions"] = professional_questions
+        return analysis
+
+    fallback = _heuristic_analysis(text, file_name)
+    metadata = {**fallback["metadata"], **result.get("metadata", {})}
+    policy_id = safe_upload_id("policy", metadata.get("name") or file_name)
+    clauses = _rebuild_clauses_for_policy(policy_id, fallback["clauses"])
+    analysis = {
+        "analysis_id": "",
+        "file_name": file_name,
+        "suitable": bool(result.get("suitable", fallback["suitable"])),
+        "reasons": result.get("reasons", fallback["reasons"]),
+        "suggestions": result.get("suggestions", fallback["suggestions"]),
+        "questions": result.get("questions", fallback["questions"]),
+        "metadata": metadata,
+        "clauses": clauses,
+        "concepts": filter_policy_concepts(result.get("concepts", fallback["concepts"])),
+        "professional_references": professional_references,
+        "professional_questions": professional_questions,
+        "text_preview": text[:1200],
+    }
+    return normalize_upload_admission(analysis, text, metadata, clauses)
+
+
+def _upload_system_prompt(skill_prompt: str) -> str:
+    return (
+        f"{skill_prompt}\n\n"
         "你必须综合专业知识库返回的专业意见，用于判断制度框架、条款结构、治理要素、流程和合规控制是否完整。"
         "知识库只作为专业参考，不能替代用户上传文件中的事实。"
         "输出JSON对象，字段为：suitable(boolean), reasons(string[]), suggestions(string[]), "
@@ -330,7 +131,10 @@ def _llm_analysis(text: str, file_name: str) -> dict[str, Any]:
         "例如制度名称/编号/版本/生效日期无法判断、保存结构项不明确、相似组织/角色是否同一主体、引用文件是否属于本次入库范围。"
         "角色未定义、术语未定义、缺少监督检查/违规追责章节、引用文件状态不明等细节完善项默认写入suggestions，不要强制逐条确认。"
     )
-    user_prompt = json.dumps(
+
+
+def _upload_user_prompt(text: str, file_name: str, kb_data: dict[str, Any]) -> str:
+    return json.dumps(
         {
             "file_name": file_name,
             "text": text[:18000],
@@ -345,23 +149,12 @@ def _llm_analysis(text: str, file_name: str) -> dict[str, Any]:
         },
         ensure_ascii=False,
     )
-    hooks.emit("before_llm_call", {"skill_id": "skill_upload_policy_file", "model": load_deepseek_settings().model})
-    try:
-        result = DeepSeekClient().chat_json(system_prompt, user_prompt)
-        hooks.emit("after_llm_call", {"skill_id": "skill_upload_policy_file", "finding_count": 0})
-    except Exception as exc:
-        hooks.emit("upload_analysis_fallback", {"reason": str(exc)})
-        analysis = _heuristic_analysis(text, file_name)
-        analysis["professional_references"] = professional_references
-        analysis["professional_questions"] = professional_questions
-        return analysis
-    fallback = _heuristic_analysis(text, file_name)
-    metadata = {**fallback["metadata"], **result.get("metadata", {})}
-    policy_id = _safe_id("policy", metadata.get("name") or file_name)
-    raw_clauses = fallback["clauses"]
-    clauses = []
+
+
+def _rebuild_clauses_for_policy(policy_id: str, raw_clauses: list[dict[str, Any]]) -> list[dict[str, Any]]:
     scoped_raw_clauses = raw_clauses[:160]
     id_map = {item.get("id"): f"clause_{policy_id}_{idx + 1}" for idx, item in enumerate(scoped_raw_clauses)}
+    clauses = []
     for idx, item in enumerate(scoped_raw_clauses):
         content = str(item.get("content", "")).strip()
         if not content:
@@ -377,27 +170,16 @@ def _llm_analysis(text: str, file_name: str) -> dict[str, Any]:
                 "order_index": idx + 1,
             }
         )
-    analysis = {
-        "analysis_id": "",
-        "file_name": file_name,
-        "suitable": bool(result.get("suitable", fallback["suitable"])),
-        "reasons": result.get("reasons", fallback["reasons"]),
-        "suggestions": result.get("suggestions", fallback["suggestions"]),
-        "questions": result.get("questions", fallback["questions"]),
-        "metadata": metadata,
-        "clauses": clauses,
-        "concepts": _filter_concepts(result.get("concepts", fallback["concepts"])),
-        "professional_references": professional_references,
-        "professional_questions": professional_questions,
-        "text_preview": text[:1200],
-    }
-    return _normalize_admission(analysis, text, metadata, clauses)
+    return clauses
 
 
-def analyze_policy_text(text: str, file_name: str) -> dict[str, Any]:
+def analyze_policy_text(text: str, file_name: str, source_bytes: bytes | None = None, content_type: str = "application/octet-stream") -> dict[str, Any]:
     analysis = _llm_analysis(text, file_name)
-    analysis_id = _safe_id("upload", file_name)
+    analysis_id = safe_upload_id("upload", file_name)
     analysis["analysis_id"] = analysis_id
+    _attach_version_match(analysis)
+    if source_bytes is not None:
+        analysis["source_file"] = _save_source_file(analysis_id, file_name, source_bytes, content_type)
     db.insert_upload_session(analysis_id, analysis)
     return analysis
 
@@ -411,7 +193,9 @@ def save_policy_analysis(analysis_id: str, category: str, answers: dict[str, str
     if not category.strip():
         raise ValueError("请先选择要保存到制度树中的哪个结构项。")
     metadata = analysis["metadata"]
-    policy_id = _safe_id("policy", metadata.get("name") or analysis["file_name"])
+    version_match = analysis.get("version_match") or {}
+    matched_policy = _resolve_version_target(version_match, answers)
+    policy_id = matched_policy.id if matched_policy else safe_upload_id("policy", metadata.get("name") or analysis["file_name"])
     raw_clauses = analysis.get("clauses", [])
     id_map = {clause.get("id"): f"clause_{policy_id}_{idx + 1}" for idx, clause in enumerate(raw_clauses)}
     clauses = [
@@ -425,23 +209,32 @@ def save_policy_analysis(analysis_id: str, category: str, answers: dict[str, str
         )
         for idx, clause in enumerate(raw_clauses)
     ]
+    existing_versions = db.fetch_policy_versions(policy_id) if matched_policy else []
+    generated_version = f"v{len(existing_versions) + 1}" if matched_policy else "v1"
     policy = PolicyDocument(
         id=policy_id,
-        name=answers.get("name") or metadata.get("name") or analysis["file_name"],
-        code=answers.get("code") or metadata.get("code") or "待确认",
-        version=answers.get("version") or metadata.get("version") or "待确认",
+        name=_field_value("name", answers, metadata, matched_policy.name if matched_policy else analysis["file_name"]),
+        code=_field_value("code", answers, metadata, matched_policy.code if matched_policy else "待确认"),
+        version=answers.get("version") or metadata.get("version") or generated_version,
         category=category or metadata.get("category") or "未分类",
-        org_scope=answers.get("org_scope") or metadata.get("org_scope") or "待确认",
+        org_scope=_field_value("org_scope", answers, metadata, matched_policy.org_scope if matched_policy else "待确认"),
         status="effective",
         effective_date=answers.get("effective_date") or metadata.get("effective_date") or "待确认",
         clauses=clauses,
+        source_file=analysis.get("source_file"),
     )
-    db.insert_policy(policy)
+    version = db.insert_current_policy_version(
+        policy,
+        change_summary="上传制度文件后保存为默认生效新版本" if matched_policy else "上传制度文件后保存为初始版本",
+    )
     hooks.emit(
         "policy_upload_saved",
         {
             "analysis_id": analysis_id,
             "policy_id": policy.id,
+            "version_id": version.id,
+            "version_no": version.version_no,
+            "saved_as": "new_version" if matched_policy else "new_policy",
             "category": policy.category,
             "clause_count": len(policy.clauses),
             "role_candidate_count": len(analysis.get("concepts", [])),
@@ -450,3 +243,134 @@ def save_policy_analysis(analysis_id: str, category: str, answers: dict[str, str
         },
     )
     return policy
+
+
+def _attach_version_match(analysis: dict[str, Any]) -> None:
+    metadata = analysis.get("metadata") or {}
+    existing = db.all_policies()
+    best: tuple[PolicyDocument, float, str] | None = None
+    for policy in existing:
+        score, reason = _policy_match_score(metadata, policy)
+        if not best or score > best[1]:
+            best = (policy, score, reason)
+    if not best or best[1] < 0.45:
+        analysis["version_match"] = {"decision": "new_policy", "confidence": best[1] if best else 0, "reason": "未发现相似制度"}
+        return
+    policy, confidence, reason = best
+    decision = "auto_version" if confidence >= 0.86 else "needs_confirmation"
+    question = f"疑似为《{policy.name}》（编号：{policy.code}）的新版本，是否作为该制度的新版本保存？"
+    analysis["version_match"] = {
+        "decision": decision,
+        "policy_id": policy.id,
+        "policy_name": policy.name,
+        "policy_code": policy.code,
+        "confidence": round(confidence, 3),
+        "reason": reason,
+        "question": question if decision == "needs_confirmation" else "",
+    }
+    if decision == "needs_confirmation":
+        questions = list(analysis.get("questions") or [])
+        if question not in questions:
+            questions.insert(0, question)
+        analysis["questions"] = questions
+
+
+def _policy_match_score(metadata: dict[str, Any], policy: PolicyDocument) -> tuple[float, str]:
+    code = _normalize(str(metadata.get("code") or ""))
+    policy_code = _normalize(policy.code)
+    if code and code != "待确认" and policy_code and code == policy_code:
+        return 0.98, "制度编号完全一致"
+    name = str(metadata.get("name") or "")
+    category = str(metadata.get("category") or "")
+    org_scope = str(metadata.get("org_scope") or "")
+    name_score = SequenceMatcher(None, _normalize(name), _normalize(policy.name)).ratio() if name else 0
+    theme_score = SequenceMatcher(
+        None,
+        _normalize(f"{name} {category} {org_scope}"),
+        _normalize(f"{policy.name} {policy.category} {policy.org_scope}"),
+    ).ratio()
+    score = max(name_score * 0.75 + theme_score * 0.25, theme_score * 0.8)
+    return score, f"名称相似度 {name_score:.2f}，制度主题相似度 {theme_score:.2f}"
+
+
+def _normalize(value: str) -> str:
+    return "".join(ch for ch in value.lower().strip() if not ch.isspace() and ch not in "《》（）()[]【】_-—")
+
+
+def _resolve_version_target(version_match: dict[str, Any], answers: dict[str, str]) -> PolicyDocument | None:
+    decision = version_match.get("decision")
+    policy_id = str(version_match.get("policy_id") or "")
+    if not policy_id or decision == "new_policy":
+        return None
+    matched = next((policy for policy in db.all_policies() if policy.id == policy_id), None)
+    if not matched:
+        return None
+    if decision == "auto_version":
+        return matched
+    question = str(version_match.get("question") or "")
+    answer = (answers.get(question) or "").strip()
+    if not answer:
+        raise ValueError("疑似匹配到已有制度，但置信度不足。请先确认是否作为已有制度的新版本保存。")
+    if any(token in answer for token in ["否", "不是", "新制度", "单独", "新建"]):
+        return None
+    if any(token in answer for token in ["是", "确认", "同一", "新版本", "作为"]):
+        return matched
+    raise ValueError("请明确回复是否作为已有制度的新版本保存。")
+
+
+def _field_value(field: str, answers: dict[str, str], metadata: dict[str, Any], fallback: str) -> str:
+    return str(answers.get(field) or metadata.get(field) or fallback)
+
+
+def source_file_for_analysis(analysis_id: str) -> tuple[Path, dict[str, Any]]:
+    analysis = db.get_upload_session(analysis_id)
+    if not analysis or not analysis.get("source_file"):
+        raise ValueError("源文件不存在。")
+    source = analysis["source_file"]
+    return _source_file_path(source), source
+
+
+def source_file_for_policy(policy: PolicyDocument) -> tuple[Path, dict[str, Any]]:
+    if not policy.source_file:
+        raise ValueError("源文件不存在。")
+    source = policy.source_file.model_dump()
+    return _source_file_path(source), source
+
+
+def source_file_for_policy_version(policy_id: str, version_id: str) -> tuple[Path, dict[str, Any]]:
+    version = db.fetch_policy_version(policy_id, version_id)
+    if not version or not version.source_file:
+        raise ValueError("源文件不存在。")
+    source = version.source_file.model_dump()
+    return _source_file_path(source), source
+
+
+def _save_source_file(analysis_id: str, file_name: str, source_bytes: bytes, content_type: str) -> dict[str, Any]:
+    suffix = Path(file_name).suffix.lower()
+    stored_name = f"{analysis_id}{suffix or '.bin'}"
+    path = _source_file_path({"stored_name": stored_name})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(source_bytes)
+    return {
+        "file_name": file_name,
+        "stored_name": stored_name,
+        "content_type": content_type or "application/octet-stream",
+        "size": len(source_bytes),
+    }
+
+
+def _source_file_path(source: dict[str, Any]) -> Path:
+    root = Path(os.getenv("POLICY_SOURCE_DIR", "backend/uploads/policy_sources"))
+    stored_name = Path(str(source["stored_name"])).name
+    return root / stored_name
+
+
+__all__ = [
+    "analyze_policy_text",
+    "extract_upload_text",
+    "extract_upload_text_from_bytes",
+    "save_policy_analysis",
+    "source_file_for_analysis",
+    "source_file_for_policy",
+    "source_file_for_policy_version",
+]

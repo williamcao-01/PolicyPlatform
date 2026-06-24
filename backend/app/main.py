@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import json
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 
+from app import db
+from app.api.assets import router as assets_router
+from app.api.auth import router as auth_router
+from app.api.audit import router as audit_router
+from app.api.ai_governance import router as ai_governance_router
+from app.api.dependencies import require_permission_legacy
+from app.api.errors import app_error_handler
+from app.api.tasks import router as tasks_router
+from app.api.system_settings import router as system_settings_router
+from app.core.exceptions import AppError
+from app.core.permissions import Permission
 from app.deepseek_client import load_deepseek_settings
 from app.excel_export import findings_workbook
 from app.hooks import hooks
@@ -13,12 +24,20 @@ from app.knowledge_base import KnowledgeBaseClient, load_knowledge_base_settings
 from pydantic import BaseModel
 
 from app.models import DashboardSummary, ProfessionalReference, RoleInventory, RoleMapping, SkillRunRequest, SkillRunResult
-from app.policy_upload import analyze_policy_text, extract_upload_text, save_policy_analysis
+from app.policy_upload import (
+    analyze_policy_text,
+    extract_upload_text_from_bytes,
+    save_policy_analysis,
+    source_file_for_analysis,
+    source_file_for_policy,
+    source_file_for_policy_version,
+)
 from app.role_inventory import RoleMappingUpdate, role_inventory, save_manual_mapping
 from app.skill_runner import run_skill as execute_skill
 from app.store import store
 
 app = FastAPI(title="AI 制度管理 Demo API")
+app.add_exception_handler(AppError, app_error_handler)
 
 
 class FindingStatusUpdate(BaseModel):
@@ -42,6 +61,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(auth_router)
+app.include_router(audit_router)
+app.include_router(tasks_router)
+app.include_router(assets_router)
+app.include_router(ai_governance_router)
+app.include_router(system_settings_router)
 
 
 @app.get("/api/health")
@@ -102,8 +127,18 @@ def policy_detail(policy_id: str):
     return policy
 
 
+@app.get("/api/policies/{policy_id}/versions")
+def policy_versions(policy_id: str) -> list:
+    if not store.get_policy(policy_id):
+        raise HTTPException(status_code=404, detail="Policy not found")
+    return db.fetch_policy_versions(policy_id)
+
+
 @app.delete("/api/policies/{policy_id}")
-def delete_policy(policy_id: str) -> dict:
+def delete_policy(
+    policy_id: str,
+    _=Depends(require_permission_legacy(Permission.ASSET_ARCHIVE)),
+) -> dict:
     if not store.delete_policy(policy_id):
         raise HTTPException(status_code=404, detail="Policy not found")
     return {"status": "deleted", "policy_id": policy_id}
@@ -135,8 +170,18 @@ def process_detail(process_id: str):
     return process
 
 
+@app.get("/api/processes/{process_id}/versions")
+def process_versions(process_id: str) -> list:
+    if not store.get_process(process_id):
+        raise HTTPException(status_code=404, detail="Process not found")
+    return db.fetch_process_versions(process_id)
+
+
 @app.delete("/api/processes/{process_id}")
-def delete_process(process_id: str) -> dict:
+def delete_process(
+    process_id: str,
+    _=Depends(require_permission_legacy(Permission.ASSET_ARCHIVE)),
+) -> dict:
     if not store.delete_process(process_id):
         raise HTTPException(status_code=404, detail="Process not found")
     return {"status": "deleted", "process_id": process_id}
@@ -171,20 +216,65 @@ def skills() -> list:
 
 
 @app.post("/api/policy-uploads/analyze")
-async def analyze_policy_upload(file: UploadFile = File(...)) -> dict:
+async def analyze_policy_upload(
+    file: UploadFile = File(...),
+    _=Depends(require_permission_legacy(Permission.ASSET_CREATE)),
+) -> dict:
     try:
-        text = await extract_upload_text(file)
-        return analyze_policy_text(text, file.filename or "uploaded-policy")
+        data = await file.read()
+        file_name = file.filename or "uploaded-policy"
+        text = extract_upload_text_from_bytes(data, file_name)
+        return analyze_policy_text(text, file_name, data, file.content_type or "application/octet-stream")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/policy-uploads/{analysis_id}/source")
+def download_upload_source(analysis_id: str):
+    try:
+        path, source = source_file_for_analysis(analysis_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Source file not found")
+    return FileResponse(path, media_type=source.get("content_type") or "application/octet-stream", filename=source.get("file_name") or path.name)
+
+
 @app.post("/api/policy-uploads/{analysis_id}/save")
-def save_policy_upload(analysis_id: str, payload: UploadSaveRequest):
+def save_policy_upload(
+    analysis_id: str,
+    payload: UploadSaveRequest,
+    _=Depends(require_permission_legacy(Permission.ASSET_CREATE)),
+):
     try:
         return save_policy_analysis(analysis_id, payload.category, payload.answers)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/policies/{policy_id}/source")
+def download_policy_source(policy_id: str):
+    policy = store.get_policy(policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    try:
+        path, source = source_file_for_policy(policy)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Source file not found")
+    return FileResponse(path, media_type=source.get("content_type") or "application/octet-stream", filename=source.get("file_name") or path.name)
+
+
+@app.get("/api/policies/{policy_id}/versions/{version_id}/source")
+def download_policy_version_source(policy_id: str, version_id: str):
+    try:
+        path, source = source_file_for_policy_version(policy_id, version_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Source file not found")
+    return FileResponse(path, media_type=source.get("content_type") or "application/octet-stream", filename=source.get("file_name") or path.name)
 
 
 @app.get("/api/findings")
@@ -203,7 +293,11 @@ def export_findings() -> Response:
 
 
 @app.patch("/api/findings/{finding_id}")
-def update_finding(finding_id: str, payload: FindingStatusUpdate):
+def update_finding(
+    finding_id: str,
+    payload: FindingStatusUpdate,
+    _=Depends(require_permission_legacy(Permission.FINDING_UPDATE)),
+):
     finding = store.update_finding_status(finding_id, payload.status)
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
@@ -211,7 +305,10 @@ def update_finding(finding_id: str, payload: FindingStatusUpdate):
 
 
 @app.post("/api/skill-runs", response_model=SkillRunResult)
-def run_skill(request: SkillRunRequest) -> SkillRunResult:
+def run_skill(
+    request: SkillRunRequest,
+    _=Depends(require_permission_legacy(Permission.SKILL_RUN)),
+) -> SkillRunResult:
     return execute_skill(request)
 
 
@@ -268,5 +365,7 @@ def _compact_reference_answer(answer: str) -> str:
 
 
 @app.get("/api/hooks/events")
-def hook_events() -> list:
+def hook_events(
+    _=Depends(require_permission_legacy(Permission.SKILL_AUDIT_READ)),
+) -> list:
     return hooks.events

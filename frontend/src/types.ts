@@ -66,6 +66,11 @@ export type Finding = {
   assumption?: string;
   suggestion: string;
   professional_references: ProfessionalReference[];
+  verification_status?: 'verified' | 'uncertain';
+  verification_note?: string;
+  policy_version_ids?: string[];
+  process_version_ids?: string[];
+  based_on_historical_version?: boolean;
 };
 
 export type SkillRunResult = {
@@ -133,6 +138,30 @@ export type PolicyDocument = {
   status: string;
   effective_date: string;
   clauses: PolicyClause[];
+  source_file?: PolicySourceFile | null;
+  current_version_id?: string;
+  version_count?: number;
+};
+
+export type PolicyVersion = {
+  id: string;
+  policy_id: string;
+  version_no: string;
+  effective_date: string;
+  status: 'current' | 'historical';
+  created_at: string;
+  created_by: string;
+  change_summary: string;
+  metadata: Record<string, string>;
+  clauses: PolicyClause[];
+  source_file?: PolicySourceFile | null;
+};
+
+export type PolicySourceFile = {
+  file_name: string;
+  stored_name: string;
+  content_type: string;
+  size: number;
 };
 
 export type ProcessNode = {
@@ -160,6 +189,22 @@ export type ProcessDefinition = {
     file_name: string;
     bpmn_xml: string;
   };
+  current_version_id?: string;
+  version_count?: number;
+};
+
+export type ProcessVersion = {
+  id: string;
+  process_id: string;
+  version_no: string;
+  effective_date: string;
+  status: 'current' | 'historical';
+  created_at: string;
+  created_by: string;
+  change_summary: string;
+  metadata: Record<string, string>;
+  nodes: ProcessNode[];
+  asset: ProcessDefinition['asset'];
 };
 
 export type WorkbenchContext = {
@@ -182,4 +227,14 @@ export type PolicyUploadAnalysis = {
   professional_references: ProfessionalReference[];
   professional_questions: ClarificationQuestion[];
   text_preview: string;
+  source_file?: PolicySourceFile;
+  version_match?: {
+    decision: 'new_policy' | 'auto_version' | 'needs_confirmation';
+    policy_id?: string;
+    policy_name?: string;
+    policy_code?: string;
+    confidence: number;
+    reason: string;
+    question?: string;
+  };
 };
